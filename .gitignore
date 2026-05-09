@@ -1,0 +1,15 @@
+# Claude Code — memory contains API keys, settings are local
+memory/
+.claude/
+CLAUDE.md
+
+# Python artifacts
+__pycache__/
+*.pyc
+
+# Template / scratch files
+workflows/wf_put.json
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,77 @@
+{
+  "name": "Stage 3 — Supplier Finder",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 6 * * *" }]
+        }
+      },
+      "id": "c3c10001-0001-0001-0001-000000000001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {},
+      "id": "c3c10002-0002-0002-0002-000000000002",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM refresh_supplier_candidates();",
+        "options": {}
+      },
+      "id": "c3c10003-0003-0003-0003-000000000003",
+      "name": "Postgres: Refresh Suppliers",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [280, 400],
+      "credentials": {
+        "postgres": {
+          "id": "WA0Gs2d5zXEHnfsq",
+          "name": "gosplan"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  (SELECT COUNT(*) FROM supplier_candidates)::text AS total_suppliers,\n  (SELECT COUNT(*) FROM target_niches WHERE status = 'verified')::text AS verified_niches,\n  (SELECT COUNT(DISTINCT ktru_code) FROM supplier_candidates)::text AS ktru_covered;",
+        "options": {}
+      },
+      "id": "c3c10004-0004-0004-0004-000000000004",
+      "name": "Postgres: Summary",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [560, 400],
+      "credentials": {
+        "postgres": {
+          "id": "WA0Gs2d5zXEHnfsq",
+          "name": "gosplan"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Postgres: Refresh Suppliers", "type": "main", "index": 0 }]]
+    },
+    "Manual Trigger": {
+      "main": [[{ "node": "Postgres: Refresh Suppliers", "type": "main", "index": 0 }]]
+    },
+    "Postgres: Refresh Suppliers": {
+      "main": [[{ "node": "Postgres: Summary", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}

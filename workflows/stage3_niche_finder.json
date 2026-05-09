@@ -1,0 +1,161 @@
+{
+  "name": "Stage 3 — Niche Finder",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 4 * * 1" }]
+        }
+      },
+      "id": "c3a10001-0001-0001-0001-000000000001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {},
+      "id": "c3a10002-0002-0002-0002-000000000002",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM refresh_target_niches();",
+        "options": {}
+      },
+      "id": "c3a10003-0003-0003-0003-000000000003",
+      "name": "Postgres: Refresh Niches",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [280, 400],
+      "credentials": {
+        "postgres": {
+          "id": "WA0Gs2d5zXEHnfsq",
+          "name": "gosplan"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  region_code::text,\n  ktru_code,\n  total_contracts::text,\n  unique_suppliers::text,\n  competition_ratio::text,\n  COALESCE(median_ratio, 0)::text AS median_ratio,\n  COALESCE(winner_inn, '') AS winner_inn,\n  COALESCE(winner_concentration, 0)::text AS winner_pct,\n  status\nFROM target_niches\nWHERE status != 'toxic'\nORDER BY competition_ratio DESC\nLIMIT 50;",
+        "options": {}
+      },
+      "id": "c3a10004-0004-0004-0004-000000000004",
+      "name": "Postgres: Get Niches",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [560, 400],
+      "credentials": {
+        "postgres": {
+          "id": "WA0Gs2d5zXEHnfsq",
+          "name": "gosplan"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "clear",
+        "documentId": {
+          "__rl": true,
+          "value": "1FB-eK3Ts8kOe75Q085E_H3IbSTr_uinSb829SIiAiBE",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Ниши",
+          "mode": "name"
+        }
+      },
+      "id": "c3a10005-0005-0005-0005-000000000005",
+      "name": "Sheets: Clear Ниши",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [840, 400],
+      "credentials": {
+        "googleApi": {
+          "id": "nAT3f9iLmTnLdPis",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1FB-eK3Ts8kOe75Q085E_H3IbSTr_uinSb829SIiAiBE",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Ниши",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Регион": "={{ $json.region_code }}",
+            "КТРУ": "={{ $json.ktru_code }}",
+            "Контракты": "={{ $json.total_contracts }}",
+            "Поставщики": "={{ $json.unique_suppliers }}",
+            "Ratio": "={{ $json.competition_ratio }}",
+            "Медиана": "={{ $json.median_ratio }}",
+            "Топ ИНН": "={{ $json.winner_inn }}",
+            "Побед %": "={{ $json.winner_pct }}",
+            "Статус": "={{ $json.status }}"
+          },
+          "schema": [
+            {"id": "Регион", "displayName": "Регион", "required": false, "defaultMatch": false, "display": true, "type": "string", "removed": false},
+            {"id": "КТРУ", "displayName": "КТРУ", "required": false, "defaultMatch": false, "display": true, "type": "string", "removed": false},
+            {"id": "Контракты", "displayName": "Контракты", "required": false, "defaultMatch": false, "display": true, "type": "string", "removed": false},
+            {"id": "Поставщики", "displayName": "Поставщики", "required": false, "defaultMatch": false, "display": true, "type": "string", "removed": false},
+            {"id": "Ratio", "displayName": "Ratio", "required": false, "defaultMatch": false, "display": true, "type": "string", "removed": false},
+            {"id": "Медиана", "displayName": "Медиана", "required": false, "defaultMatch": false, "display": true, "type": "string", "removed": false},
+            {"id": "Топ ИНН", "displayName": "Топ ИНН", "required": false, "defaultMatch": false, "display": true, "type": "string", "removed": false},
+            {"id": "Побед %", "displayName": "Побед %", "required": false, "defaultMatch": false, "display": true, "type": "string", "removed": false},
+            {"id": "Статус", "displayName": "Статус", "required": false, "defaultMatch": false, "display": true, "type": "string", "removed": false}
+          ]
+        },
+        "options": {}
+      },
+      "id": "c3a10006-0006-0006-0006-000000000006",
+      "name": "Sheets: Append Ниши",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1120, 400],
+      "credentials": {
+        "googleApi": {
+          "id": "nAT3f9iLmTnLdPis",
+          "name": "Google Service Account account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Postgres: Refresh Niches", "type": "main", "index": 0 }]]
+    },
+    "Manual Trigger": {
+      "main": [[{ "node": "Postgres: Refresh Niches", "type": "main", "index": 0 }]]
+    },
+    "Postgres: Refresh Niches": {
+      "main": [[{ "node": "Postgres: Get Niches", "type": "main", "index": 0 }]]
+    },
+    "Postgres: Get Niches": {
+      "main": [[{ "node": "Sheets: Clear Ниши", "type": "main", "index": 0 }]]
+    },
+    "Sheets: Clear Ниши": {
+      "main": [[{ "node": "Sheets: Append Ниши", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}

@@ -1,0 +1,389 @@
+{
+  "name": "Stage 1 — Contracts Collector",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 2 }]
+        }
+      },
+      "id": "a1b2c3d4-0000-0000-0000-000000000099",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 500]
+    },
+    {
+      "parameters": {},
+      "id": "a1b2c3d4-0001-0001-0001-000000000001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-api-base",
+              "name": "api_base",
+              "value": "https://v2test.gosplan.info",
+              "type": "string"
+            },
+            {
+              "id": "cfg-wait",
+              "name": "wait_seconds",
+              "value": 6,
+              "type": "number"
+            },
+            {
+              "id": "cfg-price-ge",
+              "name": "price_ge",
+              "value": 10000,
+              "type": "number"
+            },
+            {
+              "id": "cfg-price-le",
+              "name": "price_le",
+              "value": 200000,
+              "type": "number"
+            },
+            {
+              "id": "cfg-batch",
+              "name": "batch_limit",
+              "value": 10,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0002-0002-0002-000000000002",
+      "name": "Set Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO collection_tasks (region_code, month_start, month_end)\nSELECT\n  r.n AS region_code,\n  d.month_start::date,\n  (d.month_start + INTERVAL '1 month' - INTERVAL '1 day')::date AS month_end\nFROM generate_series(1, 99) AS r(n)\nCROSS JOIN (\n  SELECT generate_series('2025-01-01'::date, '2026-02-01'::date, INTERVAL '1 month') AS month_start\n) AS d\nON CONFLICT (region_code, month_start) DO NOTHING;",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0003-0003-0003-000000000003",
+      "name": "Postgres: Seed Tasks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        440,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "WA0Gs2d5zXEHnfsq",
+          "name": "gosplan"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM collection_tasks\nWHERE status = 'pending'\nORDER BY current_skip ASC, region_code ASC, month_start ASC\nLIMIT {{ $('Set Config').first().json.batch_limit }};",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0004-0004-0004-000000000004",
+      "name": "Postgres: Get Batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        660,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "WA0Gs2d5zXEHnfsq",
+          "name": "gosplan"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "a1b2c3d4-0005-0005-0005-000000000005",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Set Config').first().json.api_base }}/fz44/contracts",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "100"
+            },
+            {
+              "name": "skip",
+              "value": "={{ $json.current_skip }}"
+            },
+            {
+              "name": "published_after",
+              "value": "={{ $json.month_start }}"
+            },
+            {
+              "name": "published_before",
+              "value": "={{ $json.month_end }}"
+            },
+            {
+              "name": "price_ge",
+              "value": "={{ $('Set Config').first().json.price_ge }}"
+            },
+            {
+              "name": "price_le",
+              "value": "={{ $('Set Config').first().json.price_le }}"
+            },
+            {
+              "name": "region",
+              "value": "={{ $json.region_code }}"
+            }
+          ]
+        },
+        "sendHeaders": false,
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "a1b2c3d4-0006-0006-0006-000000000006",
+      "name": "HTTP: GosPlan Contracts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": "={{ $('Set Config').first().json.wait_seconds }}",
+        "unit": "seconds"
+      },
+      "id": "a1b2c3d4-0007-0007-0007-000000000007",
+      "name": "Wait: Rate Limit",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        300
+      ],
+      "webhookId": "b2c3d4e5-f6a7-8b9c-0d1e-2f3a4b5c6d7e"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Получаем HTTP ответ (fullResponse=true → {statusCode, headers, body: [...]})\nconst httpData = $input.first().json;\nconst task = $('Split In Batches').item.json;\n\n// Извлекаем массив контрактов из ответа\nlet contracts = [];\nif (httpData.body && Array.isArray(httpData.body)) {\n  contracts = httpData.body;\n} else if (Array.isArray(httpData)) {\n  contracts = httpData;\n} else if (httpData.statusCode === 200 && typeof httpData.body === 'string') {\n  try { contracts = JSON.parse(httpData.body); } catch(e) { contracts = []; }\n}\n\nconst count = contracts.length;\n\n// Экранируем апострофы для SQL-интерполяции\nconst contractsJsonEscaped = JSON.stringify(contracts).replace(/'/g, \"''\");\n\n// Round-robin: если вернулось 100 — возможно ещё есть записи → skip+100, status=pending\nconst newSkip = count === 100 ? task.current_skip + 100 : task.current_skip;\nconst newStatus = count === 100 ? 'pending' : 'done';\n\nreturn [{\n  json: {\n    contracts_json_escaped: contractsJsonEscaped,\n    contracts_count: count,\n    task_id: task.id,\n    task_region: task.region_code,\n    task_month: task.month_start,\n    new_skip: newSkip,\n    new_status: newStatus,\n    records_delta: count,\n    http_status: httpData.statusCode || 'unknown'\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0008-0008-0008-000000000008",
+      "name": "Code: Process Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO contracts (\n  reg_num, purchase_number, plan_number, position_number,\n  subject, price, currency_code, stage,\n  customer, suppliers, ktru, okpd2,\n  region_code, published_at, updated_at,\n  exe_start, exe_end, source\n)\nSELECT\n  (c->>'reg_num')::varchar(50),\n  NULLIF(c->>'purchase_number', '')::varchar(50),\n  NULLIF(c->>'plan_number', '')::varchar(50),\n  NULLIF(c->>'position_number', '')::varchar(50),\n  c->>'subject',\n  NULLIF(c->>'price', '')::numeric,\n  COALESCE(c->>'currency_code', 'RUB')::varchar(10),\n  COALESCE(c->>'stage', '')::varchar(10),\n  NULLIF(c->>'customer', '')::varchar(12),\n  ARRAY(SELECT jsonb_array_elements_text(COALESCE(c->'suppliers', '[]'::jsonb))),\n  ARRAY(SELECT jsonb_array_elements_text(COALESCE(c->'ktru', '[]'::jsonb))),\n  ARRAY(SELECT jsonb_array_elements_text(COALESCE(c->'okpd2', '[]'::jsonb))),\n  NULLIF(c->>'region', '')::integer,\n  NULLIF(c->>'published_at', '')::timestamptz,\n  NULLIF(c->>'updated_at', '')::timestamptz,\n  NULLIF(c->>'exe_start', '')::date,\n  NULLIF(c->>'exe_end', '')::date,\n  c\nFROM jsonb_array_elements('{{ $json.contracts_json_escaped }}'::jsonb) AS c\nWHERE c->>'reg_num' IS NOT NULL\nON CONFLICT (reg_num) DO NOTHING;",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0009-0009-0009-000000000009",
+      "name": "Postgres: Insert Contracts",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1760,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "WA0Gs2d5zXEHnfsq",
+          "name": "gosplan"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE collection_tasks SET\n  current_skip = {{ $('Code: Process Response').first().json.new_skip }},\n  status = '{{ $('Code: Process Response').first().json.new_status }}',\n  records_collected = records_collected + {{ $('Code: Process Response').first().json.records_delta }},\n  updated_at = NOW()\nWHERE id = {{ $('Code: Process Response').first().json.task_id }};",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0010-0010-0010-000000000010",
+      "name": "Postgres: Update Task",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1760,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "WA0Gs2d5zXEHnfsq",
+          "name": "gosplan"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Config": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Seed Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Seed Tasks": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Get Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Get Batch": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [],
+        [
+          {
+            "node": "HTTP: GosPlan Contracts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: GosPlan Contracts": {
+      "main": [
+        [
+          {
+            "node": "Wait: Rate Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait: Rate Limit": {
+      "main": [
+        [
+          {
+            "node": "Code: Process Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Process Response": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Insert Contracts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Insert Contracts": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Update Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Update Task": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "3ce863fe-a013-493c-97b1-090b7e2fb220"
+}

@@ -1,0 +1,159 @@
+{
+  "name": "Stage 3 — Toxicity Check",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "*/30 * * * *" }]
+        }
+      },
+      "id": "c3b10001-0001-0001-0001-000000000001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {},
+      "id": "c3b10002-0002-0002-0002-000000000002",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH sample AS (\n  SELECT\n    tn.id AS niche_id,\n    c.purchase_number,\n    c.price AS contract_price,\n    ROW_NUMBER() OVER(PARTITION BY tn.id ORDER BY c.published_at DESC) AS rn\n  FROM target_niches tn\n  JOIN contracts c ON c.region_code = tn.region_code\n  JOIN unnest(c.ktru) AS k(code) ON k.code = tn.ktru_code\n  LEFT JOIN dumping_checks dc ON dc.purchase_number = c.purchase_number\n  WHERE tn.status = 'pending'\n    AND tn.avg_dumping IS NULL\n    AND c.purchase_number IS NOT NULL\n    AND c.price BETWEEN 10000 AND 200000\n    AND c.published_at >= NOW() - INTERVAL '12 months'\n    AND dc.purchase_number IS NULL\n)\nSELECT niche_id::text, purchase_number, contract_price::text\nFROM sample\nWHERE rn <= 3\nORDER BY niche_id\nLIMIT 20;",
+        "options": {}
+      },
+      "id": "c3b10003-0003-0003-0003-000000000003",
+      "name": "Postgres: Get Batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [280, 400],
+      "credentials": {
+        "postgres": {
+          "id": "WA0Gs2d5zXEHnfsq",
+          "name": "gosplan"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "c3b10004-0004-0004-0004-000000000004",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [560, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://v2test.gosplan.info/fz44/purchases/{{ $json.purchase_number }}",
+        "options": {}
+      },
+      "id": "c3b10005-0005-0005-0005-000000000005",
+      "name": "HTTP: Get Purchase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [840, 550],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Получаем ответ API (purchase details)\nconst httpData = $input.first().json;\n\n// Получаем данные из текущего batch-элемента\nconst batch = $('Split In Batches').first().json;\n\nconst nicheId = parseInt(batch.niche_id);\nconst purchaseNum = batch.purchase_number;\nconst contractPrice = parseFloat(batch.contract_price);\n\n// НМЦК — пробуем оба варианта нотации (CamelCase ЕИС / snake_case API)\nconst maxPrice = parseFloat(httpData.maxPrice || httpData.max_price || 0);\n\nlet dumpingPct = 0;\nif (maxPrice > 0 && contractPrice > 0) {\n  dumpingPct = Math.round(((maxPrice - contractPrice) / maxPrice) * 1000) / 10;\n}\n\nreturn [{\n  json: {\n    niche_id: nicheId,\n    purchase_number: purchaseNum,\n    max_price: maxPrice,\n    contract_price: contractPrice,\n    dumping_pct: dumpingPct\n  }\n}];"
+      },
+      "id": "c3b10006-0006-0006-0006-000000000006",
+      "name": "Code: Calc Dumping",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 550]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO dumping_checks (purchase_number, niche_id, max_price, contract_price, dumping_pct)\nVALUES (\n  '{{ $json.purchase_number }}',\n  {{ $json.niche_id }},\n  {{ $json.max_price }},\n  {{ $json.contract_price }},\n  {{ $json.dumping_pct }}\n)\nON CONFLICT (purchase_number) DO NOTHING;",
+        "options": {}
+      },
+      "id": "c3b10007-0007-0007-0007-000000000007",
+      "name": "Postgres: Save Check",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1400, 550],
+      "credentials": {
+        "postgres": {
+          "id": "WA0Gs2d5zXEHnfsq",
+          "name": "gosplan"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 7,
+        "unit": "seconds"
+      },
+      "id": "c3b10008-0008-0008-0008-000000000008",
+      "name": "Wait 7s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1680, 550],
+      "webhookId": "b3c10008-0008-0008-0008-000000000008"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH agg AS (\n  SELECT\n    niche_id,\n    ROUND(AVG(dumping_pct)::numeric, 1) AS avg_dump,\n    COUNT(*) AS samples\n  FROM dumping_checks\n  WHERE max_price > 0\n  GROUP BY niche_id\n  HAVING COUNT(*) >= 2\n)\nUPDATE target_niches tn SET\n  avg_dumping = a.avg_dump,\n  status = CASE\n    WHEN a.avg_dump > 25 THEN 'risky'\n    ELSE tn.status\n  END\nFROM agg a\nWHERE tn.id = a.niche_id\n  AND tn.status = 'pending'\nRETURNING tn.id, tn.region_code::text, tn.ktru_code,\n          tn.avg_dumping::text, tn.status;",
+        "options": {}
+      },
+      "id": "c3b10009-0009-0009-0009-000000000009",
+      "name": "Postgres: Aggregate",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [840, 250],
+      "credentials": {
+        "postgres": {
+          "id": "WA0Gs2d5zXEHnfsq",
+          "name": "gosplan"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Postgres: Get Batch", "type": "main", "index": 0 }]]
+    },
+    "Manual Trigger": {
+      "main": [[{ "node": "Postgres: Get Batch", "type": "main", "index": 0 }]]
+    },
+    "Postgres: Get Batch": {
+      "main": [[{ "node": "Split In Batches", "type": "main", "index": 0 }]]
+    },
+    "Split In Batches": {
+      "main": [
+        [{ "node": "Postgres: Aggregate", "type": "main", "index": 0 }],
+        [{ "node": "HTTP: Get Purchase", "type": "main", "index": 0 }]
+      ]
+    },
+    "HTTP: Get Purchase": {
+      "main": [[{ "node": "Code: Calc Dumping", "type": "main", "index": 0 }]]
+    },
+    "Code: Calc Dumping": {
+      "main": [[{ "node": "Postgres: Save Check", "type": "main", "index": 0 }]]
+    },
+    "Postgres: Save Check": {
+      "main": [[{ "node": "Wait 7s", "type": "main", "index": 0 }]]
+    },
+    "Wait 7s": {
+      "main": [[{ "node": "Split In Batches", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
+}

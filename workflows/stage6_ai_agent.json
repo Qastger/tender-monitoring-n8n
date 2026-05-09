@@ -1,0 +1,329 @@
+{
+  "name": "Stage 6 — AI Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message"]
+      },
+      "id": "s6n001-0001-0001-0001-000000000001",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 300],
+      "webhookId": "s6w001-tg-trigger-0001-000000000001",
+      "credentials": {
+        "telegramApi": {
+          "id": "NQVNn1TL1Vpco7MH",
+          "name": "Nichesnot_bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "public": false,
+        "initialMessages": "=Привет! Я — ваш AI-эксперт по госзакупкам.\n\nЯ могу:\n• Анализировать ниши и конкуренцию\n• Оценивать тендеры\n• Искать поставщиков\n• Давать рекомендации по ценовой стратегии\n\nЗадайте вопрос!",
+        "options": {}
+      },
+      "id": "s6n002-0002-0002-0002-000000000002",
+      "name": "Chat Trigger",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 560],
+      "webhookId": "s6w002-chat-trigger-0002-000000000002"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Нормализация входа из Telegram Trigger\nconst msg = $input.first().json;\n\nconst chatId = msg.message?.chat?.id || 'unknown';\nconst text = msg.message?.text || '';\n\nreturn [{\n  json: {\n    chatInput: text,\n    sessionId: `tg_${chatId}`,\n    source: 'telegram',\n    chatId: String(chatId)\n  }\n}];"
+      },
+      "id": "s6n003-0003-0003-0003-000000000003",
+      "name": "Code: Normalize TG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [280, 300]
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "Ты — эксперт-аналитик по государственным закупкам Российской Федерации и лучший специалист по тендерам. Ты работаешь как советник поставщика-посредника, который ищет выгодные тендеры для участия.\n\n## Твоя роль\nТы анализируешь данные из PostgreSQL базы данных контрактов по 44-ФЗ и помогаешь пользователю:\n- Находить прибыльные ниши с низкой конкуренцией\n- Оценивать риски участия в конкретных тендерах\n- Анализировать поставщиков и заказчиков\n- Давать рекомендации по ценовой стратегии\n- Отвечать на вопросы о законодательстве (44-ФЗ, 223-ФЗ, ПП РФ 615)\n\n## Доступные таблицы в БД\n\n### contracts\nИсторические контракты по 44-ФЗ:\n- reg_num (PK) — регистрационный номер контракта\n- purchase_number — номер закупки\n- subject — предмет контракта\n- price — цена контракта (руб.)\n- stage — стадия: E (исполнение), ET (расторгнут), EC (исполнен), IN (недействителен)\n- customer — ИНН заказчика (строка, 10 цифр)\n- suppliers — массив ИНН поставщиков (TEXT[])\n- ktru — массив кодов КТРУ (TEXT[])\n- okpd2 — массив кодов ОКПД2 (TEXT[])\n- region_code — код региона КЛАДР (integer, 1-99)\n- published_at, exe_start, exe_end — даты\n- source — полный JSON объект из API (JSONB)\n\n### contract_stats\nАгрегированная статистика по: регион × классификатор × месяц:\n- classifier_type — 'ktru' или 'okpd2'\n- classifier_code — код классификатора\n- period_month — первый день месяца (DATE)\n- contracts_count, total_sum, avg_price, stddev_price\n- unique_suppliers, unique_customers\n\n### target_niches\nПерспективные ниши (регион × КТРУ) с низкой конкуренцией:\n- region_code, ktru_code\n- total_contracts, unique_suppliers\n- competition_ratio — контракты/поставщики (выше = меньше конкуренции)\n- median_ratio — медиана ratio по всем регионам для сравнения\n- winner_inn — ИНН топ-победителя\n- winner_concentration — % побед топ-поставщика\n- avg_dumping — средний % демпинга\n- status: pending, verified, toxic (>70% концентрация), risky (демпинг >25%)\n\n### supplier_candidates\nКандидаты-поставщики привязанные к КТРУ:\n- inn — ИНН поставщика\n- ktru_code — код КТРУ\n- contracts_count, total_volume (руб.)\n- regions_count — кол-во регионов где поставлял\n- is_likely_producer — вероятный производитель (boolean)\n\n### active_purchases\nАктуальные извещения (тендеры) на мониторинге:\n- purchase_number, region_code, ktru_codes (TEXT[])\n- max_price — НМЦК (руб.)\n- subject — предмет закупки\n- collecting_end — дедлайн подачи заявок\n- customer_inn\n- status: new, reviewed, bid, skip, alerted\n\n### dumping_checks\nАнализ демпинга:\n- purchase_number, niche_id\n- max_price (НМЦК), contract_price (цена контракта)\n- dumping_pct = (max_price - contract_price) / max_price * 100\n\n## Правила работы с SQL\n1. ВСЕГДА используй LIMIT (максимум 50 строк) — не загружай всю таблицу\n2. Для агрегаций используй GROUP BY, COUNT, SUM, AVG\n3. Для поиска по массивам (ktru, okpd2, suppliers): используй ANY() или @> оператор\n   - Пример: WHERE 'код_ктру' = ANY(ktru)\n   - Пример: WHERE suppliers @> ARRAY['ИНН']\n4. ТОЛЬКО SELECT запросы. Никогда не INSERT/UPDATE/DELETE\n5. Округляй цены: ROUND(price) или ROUND(avg_price)\n6. Для дат: используй DATE_TRUNC, EXTRACT, интервалы\n\n## Экспертные знания о госзакупках\n\n### Ключевые метрики для анализа ниши\n- Конкуренция: < 3 уникальных поставщика = низкая конкуренция (хорошо для входа)\n- Демпинг: снижение > 25% от НМЦК = агрессивный демпинг (риск)\n- Концентрация победителя: > 70% побед = «придворный поставщик» (токсичная ниша)\n- competition_ratio > 3: мало конкурентов, высокий шанс выиграть\n\n### Рекомендации по ценовой стратегии\n- Снижение 5-15% от НМЦК: безопасная стратегия для новичка\n- Снижение 15-25%: агрессивная, но допустимая\n- Снижение > 25%: требует антидемпинговых мер (обоснование цены, доп. обеспечение x1.5)\n- Если средний демпинг в нише > 20%, нужно быть готовым к ценовой войне\n\n### Законодательство\n- 44-ФЗ: строгие правила, электронные аукционы, обязательная ЕИС, малые закупки до 600 тыс.\n- 223-ФЗ: более гибкие правила, крупные госкорпорации, свои площадки\n- ПП РФ 615: капитальный ремонт, предварительный отбор подрядчиков\n\n### Стадии контракта\nE = Исполнение, ET = Расторгнут, EC = Исполнен, IN = Недействителен\n\n## Формат ответов\n- Отвечай ТОЛЬКО на русском языке\n- Используй структурированные ответы с заголовками\n- Приводи конкретные цифры из БД\n- Давай чёткие рекомендации: «участвовать / не участвовать / требует доп. анализа»\n- Когда показываешь данные таблицей, используй Markdown\n- Ссылки на закупки: https://zakupki.gov.ru/epz/order/notice/ea20/view/common-info.html?regNumber={purchase_number}\n- Будь кратким, но информативным. Не повторяй вопрос пользователя.\n\n## КРИТИЧЕСКОЕ ПРАВИЛО\nНИКОГДА не выдумывай данные. Если SQL-инструмент или API не сработали — честно сообщи пользователю об ошибке и предложи переформулировать запрос или попробовать позже. Лучше сказать «не удалось получить данные» чем выдать выдуманные цифры. Все твои ответы с цифрами ДОЛЖНЫ быть основаны на реальных результатах SQL-запросов к БД. Если ты не выполнил SQL-запрос — не приводи никаких цифр и статистики."
+        },
+        "promptType": "define",
+        "text": "={{ $json.chatInput }}"
+      },
+      "id": "s6n004-0004-0004-0004-000000000004",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [560, 440]
+    },
+    {
+      "parameters": {
+        "model": "deepseek-chat",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 4096
+        }
+      },
+      "id": "s6n005-0005-0005-0005-000000000005",
+      "name": "DeepSeek Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [400, 660],
+      "credentials": {
+        "openAiApi": {
+          "id": "ST84hYcRKgDuLNcC",
+          "name": "DeepSeek"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.sessionId || $json.sessionId || 'chat_ui_default' }}",
+        "tableName": "n8n_chat_histories",
+        "contextWindowLength": 20
+      },
+      "id": "s6n006-0006-0006-0006-000000000006",
+      "name": "Postgres Chat Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.3,
+      "position": [560, 660],
+      "credentials": {
+        "postgres": {
+          "id": "WA0Gs2d5zXEHnfsq",
+          "name": "gosplan"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "sql_query",
+        "description": "Выполняет SQL SELECT запрос к базе данных госзакупок. Доступные таблицы: contracts (контракты), contract_stats (статистика), target_niches (ниши), supplier_candidates (поставщики), active_purchases (текущие тендеры), dumping_checks (демпинг). ТОЛЬКО SELECT запросы. Всегда используй LIMIT. Передай SQL запрос в поле query.",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "skJcb2Qj5UDY5HSl",
+          "mode": "id"
+        },
+        "specifyInputSchema": true,
+        "schemaType": "fromDefinedStructure",
+        "jsonSchemaExample": "{\"query\": \"SELECT COUNT(*) FROM contracts LIMIT 1\"}"
+      },
+      "id": "s6n007-0007-0007-0007-000000000007",
+      "name": "Tool: SQL Query",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2,
+      "position": [720, 660]
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Запрос к GosPlan API v2 для получения актуальных данных о закупках и контрактах. Base URL: https://v2test.gosplan.info. Эндпоинты: /fz44/purchases (извещения), /fz44/contracts (контракты). Параметры передавать как query string. Обязательно: limit (макс 100), region как query param (?region=77). Максимум 5 значений classifier в одном запросе. Метод: GET.",
+        "method": "GET",
+        "url": "https://v2test.gosplan.info/fz44/purchases?limit=20",
+        "sendHeaders": false,
+        "sendQuery": false,
+        "sendBody": false
+      },
+      "id": "s6n008-0008-0008-0008-000000000008",
+      "name": "Tool: GosPlan API",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [880, 660]
+    },
+    {
+      "parameters": {},
+      "id": "s6n009-0009-0009-0009-000000000009",
+      "name": "Tool: Calculator",
+      "type": "@n8n/n8n-nodes-langchain.toolCalculator",
+      "typeVersion": 1,
+      "position": [1040, 660]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Route output: если source === telegram, формируем ответ для Telegram\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const source = item.json.source || 'chat_ui';\n  const output = item.json.output || item.json.text || 'Нет ответа';\n  const chatId = item.json.chatId || '1607573116';\n\n  if (source === 'telegram') {\n    // Ограничение Telegram: макс 4096 символов\n    let text = output;\n    if (text.length > 4000) {\n      text = text.substring(0, 3997) + '...';\n    }\n    results.push({\n      json: {\n        source: 'telegram',\n        chatId,\n        text\n      }\n    });\n  } else {\n    // Chat UI — ответ возвращается автоматически\n    results.push({\n      json: {\n        source: 'chat_ui',\n        text: output\n      }\n    });\n  }\n}\n\nreturn results;"
+      },
+      "id": "s6n010-0010-0010-0010-000000000010",
+      "name": "Code: Route Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [840, 440]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-telegram",
+              "leftValue": "={{ $json.source }}",
+              "rightValue": "telegram",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "s6n011-0011-0011-0011-000000000011",
+      "name": "IF Telegram",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1100, 440]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "s6n012-0012-0012-0012-000000000012",
+      "name": "Telegram: Send Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1360, 360],
+      "credentials": {
+        "telegramApi": {
+          "id": "NQVNn1TL1Vpco7MH",
+          "name": "Nichesnot_bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code: Normalize TG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Normalize TG": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Trigger": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code: Route Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DeepSeek Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: SQL Query": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: GosPlan API": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Calculator": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Route Output": {
+      "main": [
+        [
+          {
+            "node": "IF Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Telegram": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
