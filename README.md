@@ -65,7 +65,7 @@ GosPlan API v2
 | Workflow automation | [n8n](https://n8n.io) (self-hosted) |
 | Database | PostgreSQL |
 | Procurement data | [GosPlan API v2](https://swagger.gosplan.info) |
-| AI backbone | Claude API (Anthropic) |
+| AI backbone | DeepSeek (via OpenRouter-compatible endpoint) |
 | Notifications | Telegram Bot API |
 | Reporting | Google Sheets (OAuth2 Service Account) |
 
